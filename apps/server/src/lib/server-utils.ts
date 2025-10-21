@@ -1,4 +1,4 @@
-import type { IGetThreadResponse, IGetThreadsResponse } from './driver/types';
+import type { IGetThreadResponse, IGetThreadsResponse, ManagerConfig } from './driver/types';
 import { OutgoingMessageType } from '../routes/agent/types';
 import { getContext } from 'hono/context-storage';
 import { connection } from '../db/schema';
@@ -573,19 +573,45 @@ export const getActiveConnection = async () => {
   return firstConnection;
 };
 
-export const connectionToDriver = (activeConnection: typeof connection.$inferSelect) => {
-  if (!activeConnection.accessToken || !activeConnection.refreshToken) {
-    throw new Error(`Invalid connection ${JSON.stringify(activeConnection?.id)}`);
+export const connectionToDriver = async (activeConnection: typeof connection.$inferSelect) => {
+  // Skip OAuth validation for IMAP
+  if (activeConnection.providerId !== 'imap') {
+    if (!activeConnection.accessToken || !activeConnection.refreshToken) {
+      throw new Error(`Invalid OAuth connection ${JSON.stringify(activeConnection?.id)}`);
+    }
   }
 
-  return createDriver(activeConnection.providerId, {
+  // Build manager config
+  const config: ManagerConfig = {
     auth: {
       userId: activeConnection.userId,
       accessToken: activeConnection.accessToken,
       refreshToken: activeConnection.refreshToken,
       email: activeConnection.email,
     },
-  });
+    connectionId: activeConnection.id,
+  };
+
+  // Add IMAP-specific config if available
+  if (activeConnection.imapHost && activeConnection.imapPort && activeConnection.imapSecurity) {
+    config.imap = {
+      host: activeConnection.imapHost,
+      port: activeConnection.imapPort,
+      security: activeConnection.imapSecurity,
+      password: activeConnection.encryptedPassword || '', // Will be decrypted in ImapMailManager
+    };
+  }
+
+  // Add SMTP-specific config if available
+  if (activeConnection.smtpHost && activeConnection.smtpPort && activeConnection.smtpSecurity) {
+    config.smtp = {
+      host: activeConnection.smtpHost,
+      port: activeConnection.smtpPort,
+      security: activeConnection.smtpSecurity,
+    };
+  }
+
+  return await createDriver(activeConnection.providerId, config, activeConnection.id);
 };
 
 export const verifyToken = async (token: string) => {
