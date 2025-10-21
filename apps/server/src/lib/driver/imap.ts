@@ -53,6 +53,7 @@ import { StandardizedError } from './utils';
 import { createMimeMessage } from 'mimetext';
 import { deserializeFiles } from '../schemas';
 import Imap from 'imap';
+import { sendEmailWithManager, type EmailData } from '../smtp-utils';
 
 /**
  * IMAP-specific message representation with UID
@@ -641,23 +642,86 @@ export class ImapMailManager implements MailManager {
   }
 
   /**
-   * Send draft
+   * Send draft via SMTP
    *
-   * Phase 5 implementation - requires SMTP
+   * Phase 5 Implementation - Task 5.3
    *
-   * @param id - Draft ID
-   * @param data - Outgoing message data
+   * In IMAP, drafts are stored in the "Drafts" folder as regular messages.
+   * Unlike OAuth providers (Google, Outlook) which have native draft APIs,
+   * IMAP draft sending simply means:
+   * 1. Send the draft as a regular email via SMTP (using create())
+   * 2. Optionally delete the draft from the Drafts folder
+   *
+   * This implementation reuses the existing create() method which handles
+   * SMTP sending. The draft ID is logged for tracking but not used for
+   * actual SMTP operations, as SMTP sending is based on the message content,
+   * not the draft storage.
+   *
+   * @param id - Draft ID (UID in Drafts folder) - used for logging/tracking
+   * @param data - Outgoing message data with recipients, subject, body, etc.
+   * @returns Promise<void> - Throws error if sending fails
+   *
+   * @example
+   * await manager.sendDraft('imap-123@host', {
+   *   to: [{ email: 'user@example.com' }],
+   *   subject: 'Test',
+   *   message: '<p>Hello</p>'
+   * });
    */
   async sendDraft(id: string, data: IOutgoingMessage): Promise<void> {
-    const err = new Error('sendDraft() will be implemented in Phase 5 (SMTP)') as Error & { code: string };
-    err.code = 'NOT_IMPLEMENTED';
-    throw new StandardizedError(err, 'sendDraft');
+    console.log(`[IMAP] Sending draft ${id} as email via SMTP`);
+
+    // Drafts in IMAP are sent as regular emails via SMTP
+    // The draft ID is informational only - we use create() to send via SMTP
+    const result = await this.create(data);
+
+    if (result.error) {
+      console.error(`[IMAP] Failed to send draft ${id}:`, result.error);
+      const err = new Error(`Failed to send draft: ${result.error}`) as Error & { code: string };
+      err.code = 'DRAFT_SEND_FAILED';
+      throw new StandardizedError(err, 'sendDraft');
+    }
+
+    if (result.id) {
+      console.log(`[IMAP] Draft ${id} sent successfully via SMTP with message ID: ${result.id}`);
+    } else {
+      console.log(`[IMAP] Draft ${id} sent successfully via SMTP (no message ID returned)`);
+    }
+
+    // Note: We don't automatically delete the draft from the Drafts folder
+    // The client should call deleteDraft() if they want to remove it
   }
 
   /**
-   * Delete draft
+   * Delete draft from Drafts folder
    *
-   * @param id - Draft ID to delete
+   * Phase 5 Implementation - Task 5.3
+   *
+   * Deletes a draft message from the IMAP Drafts folder by marking it with
+   * the \Deleted flag and expunging it. This is the standard IMAP way to
+   * permanently delete messages.
+   *
+   * The draft ID can be in two formats:
+   * - Full format: "imap-{uid}@{host}" (e.g., "imap-123@mail.example.com")
+   * - Simple format: Just the UID number (e.g., "123")
+   *
+   * Process:
+   * 1. Connect to IMAP server
+   * 2. Open Drafts folder in read-write mode
+   * 3. Parse UID from the draft ID
+   * 4. Mark message with \Deleted flag
+   * 5. Expunge to permanently remove the message
+   * 6. Disconnect from server
+   *
+   * @param id - Draft ID to delete (UID or full imap-{uid}@{host} format)
+   * @returns Promise<void> - Throws error if deletion fails
+   *
+   * @example
+   * // Delete using full ID format
+   * await manager.deleteDraft('imap-123@mail.example.com');
+   *
+   * // Delete using simple UID format
+   * await manager.deleteDraft('123');
    */
   async deleteDraft(id: string): Promise<void> {
     const imap = await this.connect();
@@ -665,27 +729,30 @@ export class ImapMailManager implements MailManager {
     try {
       await openBox(imap, 'Drafts', false); // Read-write mode
 
-      // Parse UID from ID
+      // Parse UID from ID (supports both "imap-123@host" and "123" formats)
       const match = id.match(/imap-(\d+)@/);
       const uid = match ? Number(match[1]) : Number(id);
 
+      console.log(`[IMAP] Deleting draft with UID ${uid} from Drafts folder`);
+
       return new Promise((resolve, reject) => {
+        // Step 1: Mark message as deleted
         imap.addFlags([uid], ['\\Deleted'], (err) => {
           if (err) {
-            console.error('[IMAP] Failed to delete draft:', err);
+            console.error('[IMAP] Failed to mark draft as deleted:', err);
             const delErr = err as Error & { code: string };
             delErr.code = delErr.code || 'DELETE_DRAFT_FAILED';
             reject(new StandardizedError(delErr, 'deleteDraft'));
           } else {
-            // Expunge to permanently delete
+            // Step 2: Expunge to permanently delete marked messages
             imap.expunge((expungeErr) => {
               if (expungeErr) {
-                console.error('[IMAP] Failed to expunge:', expungeErr);
+                console.error('[IMAP] Failed to expunge deleted draft:', expungeErr);
                 const expErr = expungeErr as Error & { code: string };
                 expErr.code = expErr.code || 'EXPUNGE_FAILED';
                 reject(new StandardizedError(expErr, 'deleteDraft'));
               } else {
-                console.log(`[IMAP] Deleted draft UID ${uid}`);
+                console.log(`[IMAP] Successfully deleted draft UID ${uid} from Drafts folder`);
                 resolve();
               }
             });
@@ -1123,11 +1190,73 @@ export class ImapMailManager implements MailManager {
   }
 
   /**
-   * Create/send email - Phase 5 implementation (SMTP)
+   * Create/send email via SMTP
+   *
+   * Converts IOutgoingMessage to EmailData format and sends via SMTP.
+   * This is Phase 5 implementation using smtp-utils.
+   *
+   * @param data - Outgoing message data with recipients, subject, body, attachments
+   * @returns Response with message ID or error
    */
-  async create(data: IOutgoingMessage): Promise<{ id?: string | null }> {
-    const err = new Error('create() will be implemented in Phase 5 (SMTP)') as Error & { code: string };
-    err.code = 'NOT_IMPLEMENTED';
-    throw new StandardizedError(err, 'create');
+  async create(data: IOutgoingMessage): Promise<{ id?: string | null; error?: string }> {
+    try {
+      // Convert IOutgoingMessage to EmailData format
+      const emailData: EmailData = {
+        to: data.to,
+        cc: data.cc,
+        bcc: data.bcc,
+        subject: data.subject,
+        body: data.message,
+        attachments: this.convertAttachments(data.attachments),
+        replyTo: undefined, // IOutgoingMessage doesn't have replyTo as Sender
+        inReplyTo: data.headers?.['In-Reply-To'],
+        references: data.headers?.['References'],
+      };
+
+      // Send email via SMTP
+      const result = await sendEmailWithManager(this.config, emailData);
+
+      if (!result.success) {
+        console.error('[IMAP] Failed to send email via SMTP:', result.error);
+        return {
+          id: null,
+          error: result.error || 'Failed to send email',
+        };
+      }
+
+      console.log('[IMAP] Email sent successfully via SMTP:', result.messageId);
+      return {
+        id: result.messageId || null,
+      };
+    } catch (err) {
+      console.error('[IMAP] Error in create():', err);
+      const error = err instanceof Error ? err.message : String(err);
+      return {
+        id: null,
+        error,
+      };
+    }
+  }
+
+  /**
+   * Convert IOutgoingMessage attachments to EmailData attachments
+   *
+   * Transforms base64-encoded attachments to Buffer format required by nodemailer.
+   *
+   * @param attachments - Array of attachments with base64 content
+   * @returns Array of EmailAttachment with Buffer content
+   */
+  private convertAttachments(
+    attachments?: IOutgoingMessage['attachments'],
+  ): EmailData['attachments'] {
+    if (!attachments || attachments.length === 0) {
+      return undefined;
+    }
+
+    return attachments.map((att) => ({
+      filename: att.name,
+      content: Buffer.from(att.base64, 'base64'),
+      contentType: att.type,
+    }));
   }
 }
