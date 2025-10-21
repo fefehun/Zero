@@ -44,10 +44,23 @@ export type ManagerConfig = {
   auth: {
     userId: string;
     // accountId: string;
-    accessToken: string;
-    refreshToken: string;
+    accessToken?: string; // Optional for IMAP
+    refreshToken?: string; // Optional for IMAP
     email: string;
   };
+  // IMAP-specific config (populated by connectionToDriver for IMAP)
+  imap?: {
+    host: string;
+    port: number;
+    security: 'SSL' | 'STARTTLS' | 'NONE';
+    password: string; // Decrypted password
+  };
+  smtp?: {
+    host: string;
+    port: number;
+    security: 'SSL' | 'STARTTLS' | 'NONE';
+  };
+  connectionId?: string; // Connection ID for loading IMAP config
 };
 
 export interface MailManager {

@@ -128,8 +128,18 @@ export const connection = createTable(
     accessToken: text('access_token'),
     refreshToken: text('refresh_token'),
     scope: text('scope').notNull(),
-    providerId: text('provider_id').$type<'google' | 'microsoft'>().notNull(),
+    providerId: text('provider_id').$type<'google' | 'microsoft' | 'imap'>().notNull(),
     expiresAt: timestamp('expires_at').notNull(),
+    // IMAP-specific fields
+    imapHost: text('imap_host'),
+    imapPort: integer('imap_port'),
+    imapSecurity: text('imap_security').$type<'SSL' | 'STARTTLS' | 'NONE'>(),
+    smtpHost: text('smtp_host'),
+    smtpPort: integer('smtp_port'),
+    smtpSecurity: text('smtp_security').$type<'SSL' | 'STARTTLS' | 'NONE'>(),
+    authType: text('auth_type').$type<'oauth2' | 'app_password' | 'password'>().default('oauth2'),
+    encryptedPassword: text('encrypted_password'),
+    lastSyncUid: text('last_sync_uid'),
     createdAt: timestamp('created_at').notNull(),
     updatedAt: timestamp('updated_at').notNull(),
   },
@@ -138,6 +148,7 @@ export const connection = createTable(
     index('connection_user_id_idx').on(t.userId),
     index('connection_expires_at_idx').on(t.expiresAt),
     index('connection_provider_id_idx').on(t.providerId),
+    index('connection_auth_type_idx').on(t.authType),
   ],
 );
 
