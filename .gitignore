@@ -49,6 +49,9 @@ next-env.d.ts
 i18n.cache
 apps/mail/scripts.ts
 
+# claude code (user-specific settings)
+.claude/settings.local.json
+
 .wrangler
 worker-configuration.d.ts
 

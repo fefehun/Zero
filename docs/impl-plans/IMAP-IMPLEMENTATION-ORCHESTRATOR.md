@@ -42,17 +42,25 @@ Before starting orchestration:
 
 ## Required Agent Plugins
 
-Install these plugins before starting:
+These plugins are already installed for this project:
 
 ```bash
-/plugin marketplace add wshobson/agents
-/plugin install javascript-typescript       # TypeScript/Node.js (nodejs-expert, typescript-pro)
-/plugin install backend-development         # Backend architecture (backend-architect)
-/plugin install database-design            # Database (database-architect, sql-pro)
-/plugin install unit-testing               # Testing (test-automator)
-/plugin install code-review-ai            # Review (code-reviewer)
-/plugin install security-scanning         # Security (security-auditor)
+# Already installed via .claude/settings.json:
+# - full-stack-orchestration (deployment-engineer, performance-engineer, security-auditor, test-automator)
+# - javascript-typescript (javascript-pro, typescript-pro)
+# - backend-development (backend-architect, graphql-architect, tdd-orchestrator)
+# - database-design (database-architect, sql-pro)
+# - code-review-ai (architect-review)
 ```
+
+**Available Agents**:
+- `javascript-typescript::typescript-pro` - TypeScript/Node.js development
+- `backend-development::backend-architect` - Backend architecture design
+- `database-design::database-architect` - Database schema design
+- `database-design::sql-pro` - SQL implementation
+- `code-review-ai::architect-review` - Architecture review and code quality
+- `full-stack-orchestration::test-automator` - Test generation
+- `full-stack-orchestration::security-auditor` - Security audits
 
 ---
 
@@ -64,11 +72,11 @@ Install these plugins before starting:
 
 ### Task 1.1: Install Dependencies
 
-**Agent**: `javascript-typescript::nodejs-expert`
+**Agent**: `javascript-typescript::typescript-pro`
 
 **Execution**:
 ```
-Use Task tool with subagent_type="javascript-typescript::nodejs-expert"
+Use Task tool with subagent_type="javascript-typescript::typescript-pro"
 ```
 
 **Prompt**:
@@ -324,11 +332,11 @@ Include in report:
 
 ### Phase 1 Audit
 
-**Agent**: `code-review-ai::code-reviewer`
+**Agent**: `code-review-ai::architect-review`
 
 **Execution**:
 ```
-Use Task tool with subagent_type="code-review-ai::code-reviewer"
+Use Task tool with subagent_type="code-review-ai::architect-review"
 ```
 
 **Prompt**:
@@ -922,11 +930,11 @@ Include in report:
 
 ### Phase 2 Audit
 
-**Agent**: `code-review-ai::code-reviewer`
+**Agent**: `code-review-ai::architect-review`
 
 **Execution**:
 ```
-Use Task tool with subagent_type="code-review-ai::code-reviewer"
+Use Task tool with subagent_type="code-review-ai::architect-review"
 ```
 
 **Prompt**:
@@ -1256,11 +1264,11 @@ Include in report:
 
 ### Phase 3 Audit
 
-**Agent**: `code-review-ai::code-reviewer`
+**Agent**: `code-review-ai::architect-review`
 
 **Execution**:
 ```
-Use Task tool with subagent_type="code-review-ai::code-reviewer"
+Use Task tool with subagent_type="code-review-ai::architect-review"
 ```
 
 **Prompt**:
@@ -1469,7 +1477,12 @@ Report to: /home/code/workspaces/Zero/docs/reports/phase-6/task-6.2-parsedmessag
 
 ### Task 6.3: End-to-End Workflow Test
 
-**Agent**: `unit-testing::test-automator`
+**Agent**: `full-stack-orchestration::test-automator`
+
+**Execution**:
+```
+Use Task tool with subagent_type="full-stack-orchestration::test-automator"
+```
 
 **Prompt**:
 ```
@@ -1540,7 +1553,12 @@ Report to: /home/code/workspaces/Zero/docs/reports/phase-6/task-6.4-error-handli
 
 ### Phase 6 Final Audit
 
-**Agent**: `security-scanning::security-auditor`
+**Agent**: `full-stack-orchestration::security-auditor`
+
+**Execution**:
+```
+Use Task tool with subagent_type="full-stack-orchestration::security-auditor"
+```
 
 **Prompt**:
 ```
@@ -1661,7 +1679,12 @@ git tag v1.0.0-imap
 
 ### Final Report Generation
 
-**Agent**: `code-documentation::doc-generator`
+**Agent**: `code-review-ai::architect-review`
+
+**Execution**:
+```
+Use Task tool with subagent_type="code-review-ai::architect-review"
+```
 
 **Prompt**:
 ```
