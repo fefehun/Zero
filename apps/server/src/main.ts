@@ -1091,6 +1091,55 @@ export default class Entry extends WorkerEntrypoint<ZeroEnv> {
         );
         break;
       }
+      case batch.queue.startsWith('imap-poll-queue'): {
+        await Promise.all(
+          batch.messages.map(async (msg: any) => {
+            const { connectionId, action } = msg.body;
+
+            try {
+              if (action === 'start') {
+                console.log(`[IMAP_POLL] Starting polling for connection: ${connectionId}`);
+                // Send first poll message with initial delay
+                await env.imap_poll_queue.send(
+                  { connectionId, action: 'poll' },
+                  { delaySeconds: 10 } // Initial poll after 10 seconds
+                );
+              } else if (action === 'poll') {
+                console.log(`[IMAP_POLL] Polling connection: ${connectionId}`);
+
+                // Check if connection is still subscribed
+                const subscriptionState = await env.subscribed_accounts.get(
+                  `${connectionId}__${EProviders.imap}`
+                );
+
+                if (subscriptionState !== 'active') {
+                  console.log(`[IMAP_POLL] Connection ${connectionId} is not active, stopping poll`);
+                  return;
+                }
+
+                // Poll IMAP for new messages
+                try {
+                  await this.pollImap(connectionId);
+                } catch (error) {
+                  console.error(`[IMAP_POLL] Error polling connection ${connectionId}:`, error);
+                }
+
+                // Re-enqueue for next poll (5 minutes)
+                await env.imap_poll_queue.send(
+                  { connectionId, action: 'poll' },
+                  { delaySeconds: 300 } // 5 minutes
+                );
+              } else if (action === 'stop') {
+                console.log(`[IMAP_POLL] Stopping polling for connection: ${connectionId}`);
+                // Do nothing, polling will stop
+              }
+            } catch (error) {
+              console.error(`[IMAP_POLL] Error processing message for connection ${connectionId}:`, error);
+            }
+          }),
+        );
+        break;
+      }
     }
   }
   async scheduled() {
@@ -1244,6 +1293,132 @@ export default class Entry extends WorkerEntrypoint<ZeroEnv> {
     console.log(
       `[SCHEDULED] Processed ${allAccounts.keys.length} accounts, found ${expiredSubscriptions.length} expired subscriptions`,
     );
+  }
+
+  /**
+   * Poll IMAP connection for new messages
+   *
+   * This method:
+   * 1. Loads the connection from database
+   * 2. Creates an IMAP driver using connectionToDriver
+   * 3. Fetches new messages since last sync (using lastSyncUid)
+   * 4. Triggers thread workflow for each new thread
+   * 5. Updates lastSyncUid in database
+   */
+  private async pollImap(connectionId: string) {
+    const tracer = initTracing();
+    const span = tracer.startSpan('imap_poll', {
+      attributes: {
+        'connection.id': connectionId,
+        'provider.id': EProviders.imap,
+      },
+    });
+
+    try {
+      console.log(`[IMAP_POLL] Polling connection: ${connectionId}`);
+
+      // 1. Load connection from database
+      const { db, conn } = createDb(this.env.HYPERDRIVE.connectionString);
+      let foundConnection;
+
+      try {
+        const [connectionRecord] = await db
+          .select()
+          .from(connection)
+          .where(eq(connection.id, connectionId));
+
+        if (!connectionRecord) {
+          console.error(`[IMAP_POLL] Connection not found: ${connectionId}`);
+          span.setStatus({ code: 2, message: 'Connection not found' });
+          return;
+        }
+
+        if (connectionRecord.providerId !== EProviders.imap) {
+          console.error(`[IMAP_POLL] Connection is not IMAP: ${connectionId}`);
+          span.setStatus({ code: 2, message: 'Not an IMAP connection' });
+          return;
+        }
+
+        foundConnection = connectionRecord;
+        console.log(`[IMAP_POLL] Found connection: ${connectionId}`);
+      } finally {
+        await conn.end();
+      }
+
+      // 2. Create driver using connectionToDriver
+      const { connectionToDriver } = await import('./lib/server-utils');
+      const driver = await connectionToDriver(foundConnection);
+
+      // 3. Fetch new messages from INBOX
+      const lastSyncUid = foundConnection.lastSyncUid || '0';
+      console.log(`[IMAP_POLL] Last sync UID: ${lastSyncUid}`);
+
+      // List messages in INBOX (get threads since last sync)
+      // For IMAP, we'll use pageToken as the UID to start from
+      const response = await driver.list({
+        folder: 'INBOX',
+        pageToken: lastSyncUid === '0' ? undefined : parseInt(lastSyncUid),
+        maxResults: 50, // Limit to 50 new threads per poll
+      });
+
+      console.log(`[IMAP_POLL] Found ${response.threads.length} new threads`);
+      span.setAttribute('threads.count', response.threads.length);
+
+      // 4. Trigger thread workflow for each new thread
+      if (response.threads.length > 0) {
+        const workflowRunner = env.WORKFLOW_RUNNER.get(env.WORKFLOW_RUNNER.newUniqueId());
+
+        for (const thread of response.threads) {
+          try {
+            console.log(`[IMAP_POLL] Triggering workflow for thread: ${thread.id}`);
+
+            await workflowRunner.runThreadWorkflowWithoutEffect({
+              connectionId,
+              threadId: thread.id,
+              providerId: EProviders.imap,
+            });
+
+            console.log(`[IMAP_POLL] Workflow triggered for thread: ${thread.id}`);
+          } catch (error) {
+            console.error(`[IMAP_POLL] Error triggering workflow for thread ${thread.id}:`, error);
+            span.recordException(error as Error);
+          }
+        }
+
+        // 5. Update lastSyncUid in database
+        // Get the highest UID from the response
+        const maxUid = Math.max(
+          ...response.threads
+            .map(t => t.$raw && typeof t.$raw === 'object' && 'uid' in t.$raw ? (t.$raw as any).uid : 0)
+            .filter(uid => typeof uid === 'number' && uid > 0)
+        );
+
+        if (maxUid > 0) {
+          const { db: updateDb, conn: updateConn } = createDb(this.env.HYPERDRIVE.connectionString);
+          try {
+            await updateDb
+              .update(connection)
+              .set({ lastSyncUid: maxUid.toString() })
+              .where(eq(connection.id, connectionId));
+
+            console.log(`[IMAP_POLL] Updated lastSyncUid to: ${maxUid}`);
+            span.setAttribute('last_sync_uid', maxUid.toString());
+          } finally {
+            await updateConn.end();
+          }
+        }
+      }
+
+      span.setStatus({ code: 1, message: 'Success' });
+      console.log(`[IMAP_POLL] Poll completed for connection: ${connectionId}`);
+    } catch (error) {
+      console.error(`[IMAP_POLL] Error polling connection ${connectionId}:`, error);
+      span.recordException(error as Error);
+      span.setStatus({ code: 2, message: (error as Error).message });
+      throw error;
+    } finally {
+      span.end();
+    }
   }
 }
 

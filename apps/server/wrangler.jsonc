@@ -95,6 +95,10 @@
             "queue": "send-email-queue",
             "binding": "send_email_queue",
           },
+          {
+            "queue": "imap-poll-queue",
+            "binding": "imap_poll_queue",
+          },
         ],
         "consumers": [
           {
@@ -105,6 +109,13 @@
           },
           {
             "queue": "send-email-queue",
+          },
+          {
+            "queue": "imap-poll-queue",
+            "max_batch_size": 10,
+            "max_batch_timeout": 30,
+            "max_retries": 3,
+            "dead_letter_queue": "imap-poll-dlq",
           },
         ],
       },
@@ -322,6 +333,10 @@
             "queue": "send-email-queue-staging",
             "binding": "send_email_queue",
           },
+          {
+            "queue": "imap-poll-queue-staging",
+            "binding": "imap_poll_queue",
+          },
         ],
         "consumers": [
           {
@@ -332,6 +347,13 @@
           },
           {
             "queue": "send-email-queue-staging",
+          },
+          {
+            "queue": "imap-poll-queue-staging",
+            "max_batch_size": 10,
+            "max_batch_timeout": 30,
+            "max_retries": 3,
+            "dead_letter_queue": "imap-poll-dlq-staging",
           },
         ],
       },
@@ -550,6 +572,10 @@
             "queue": "send-email-queue-prod",
             "binding": "send_email_queue",
           },
+          {
+            "queue": "imap-poll-queue-prod",
+            "binding": "imap_poll_queue",
+          },
         ],
         "consumers": [
           {
@@ -560,6 +586,13 @@
           },
           {
             "queue": "send-email-queue-prod",
+          },
+          {
+            "queue": "imap-poll-queue-prod",
+            "max_batch_size": 10,
+            "max_batch_timeout": 30,
+            "max_retries": 3,
+            "dead_letter_queue": "imap-poll-dlq-prod",
           },
         ],
       },
