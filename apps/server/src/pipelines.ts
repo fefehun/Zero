@@ -849,6 +849,131 @@ export class WorkflowRunner extends DurableObject<ZeroEnv> {
 
         console.log('[THREAD_WORKFLOW] Thread processing complete');
         return 'Thread workflow completed successfully';
+      } else if (providerId === EProviders.imap) {
+        console.log('[THREAD_WORKFLOW] Processing IMAP provider workflow');
+        const { db, conn } = createDb(this.env.HYPERDRIVE.connectionString);
+
+        let foundConnection;
+        try {
+          console.log('[THREAD_WORKFLOW] Finding connection:', connectionId);
+          const [connectionRecord] = await db
+            .select()
+            .from(connection)
+            .where(eq(connection.id, connectionId.toString()));
+
+          if (!connectionRecord) {
+            throw new Error(`Connection not found ${connectionId}`);
+          }
+          // IMAP connections don't require OAuth tokens
+          console.log('[THREAD_WORKFLOW] Found connection:', connectionRecord.id);
+          foundConnection = connectionRecord;
+        } catch (error) {
+          console.error('[THREAD_WORKFLOW] Database error:', error);
+          throw { _tag: 'DatabaseError' as const, error };
+        } finally {
+          try {
+            await conn.end();
+          } catch (error) {
+            console.error('[THREAD_WORKFLOW] Failed to close connection:', error);
+          }
+        }
+
+        let thread;
+        try {
+          console.log('[THREAD_WORKFLOW] Getting thread:', threadId);
+          // Use connectionToDriver to create IMAP driver
+          const { connectionToDriver } = await import('./lib/server-utils');
+          const driver = await connectionToDriver(foundConnection);
+
+          // Fetch thread using driver.get()
+          const threadResponse = await driver.get(threadId.toString());
+          console.log('[THREAD_WORKFLOW] Found thread with messages:', threadResponse.messages.length);
+          thread = threadResponse;
+        } catch (error) {
+          console.error('[THREAD_WORKFLOW] IMAP API error:', error);
+          throw { _tag: 'ImapApiError' as const, error };
+        }
+
+        if (!thread.messages || thread.messages.length === 0) {
+          console.log('[THREAD_WORKFLOW] Thread has no messages, skipping processing');
+          keysToDelete.push(threadId.toString());
+          return 'Thread has no messages';
+        }
+
+        const workflowEngine = createDefaultWorkflows();
+
+        const workflowContext: WorkflowContext = {
+          connectionId: connectionId.toString(),
+          threadId: threadId.toString(),
+          thread,
+          foundConnection,
+          results: new Map<string, unknown>(),
+          env: this.env,
+        };
+
+        let workflowResults;
+        try {
+          const allResults = new Map<string, unknown>();
+          const allErrors = new Map<string, Error>();
+
+          const workflowNames = workflowEngine.getWorkflowNames();
+
+          for (const workflowName of workflowNames) {
+            console.log(`[THREAD_WORKFLOW] Executing workflow: ${workflowName}`);
+
+            try {
+              const { results, errors } = await workflowEngine.executeWorkflow(
+                workflowName,
+                workflowContext,
+              );
+
+              results.forEach((value, key) => allResults.set(key, value));
+              errors.forEach((value, key) => allErrors.set(key, value));
+
+              console.log(`[THREAD_WORKFLOW] Completed workflow: ${workflowName}`);
+            } catch (error) {
+              console.error(`[THREAD_WORKFLOW] Failed to execute workflow ${workflowName}:`, error);
+              const errorObj = error instanceof Error ? error : new Error(String(error));
+              allErrors.set(workflowName, errorObj);
+            }
+          }
+
+          workflowResults = { results: allResults, errors: allErrors };
+        } catch (error) {
+          console.error('[THREAD_WORKFLOW] Workflow creation failed:', error);
+          throw { _tag: 'WorkflowCreationFailed' as const, error };
+        }
+
+        workflowEngine.clearContext(workflowContext);
+
+        const successfulSteps = Array.from(workflowResults.results.keys());
+        const failedSteps = Array.from(workflowResults.errors.keys());
+
+        if (successfulSteps.length > 0) {
+          console.log('[THREAD_WORKFLOW] Successfully executed steps:', successfulSteps);
+        }
+
+        if (failedSteps.length > 0) {
+          console.log('[THREAD_WORKFLOW] Failed steps:', failedSteps);
+          workflowResults.errors.forEach((error, stepId) => {
+            console.log(`[THREAD_WORKFLOW] Error in step ${stepId}:`, error.message);
+          });
+        }
+
+        keysToDelete.push(threadId.toString());
+
+        if (keysToDelete.length > 0) {
+          try {
+            console.log('[THREAD_WORKFLOW] Bulk deleting keys:', keysToDelete);
+            const result = await bulkDeleteKeys(keysToDelete);
+            console.log('[THREAD_WORKFLOW] Bulk delete result:', result);
+          } catch (error) {
+            console.error('[THREAD_WORKFLOW] Failed to bulk delete keys:', error);
+          }
+        }
+
+        console.log('[THREAD_WORKFLOW] Thread processing complete');
+        return 'Thread workflow completed successfully';
       } else {
         console.log('[THREAD_WORKFLOW] Unsupported provider:', providerId);
         throw { _tag: 'UnsupportedProvider' as const, providerId };
