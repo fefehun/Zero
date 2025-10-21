@@ -96,7 +96,7 @@ const connectionHandlerHook = async (account: Account) => {
     });
   }
 
-  const driver = createDriver(account.providerId, {
+  const driver = await createDriver(account.providerId, {
     auth: {
       accessToken: account.accessToken,
       refreshToken: account.refreshToken,
@@ -221,7 +221,7 @@ export const createAuth = () => {
                   id: connection.id,
                   providerId: connection.providerId as EProviders,
                 });
-                const driver = createDriver(connection.providerId, {
+                const driver = await createDriver(connection.providerId, {
                   auth: {
                     accessToken: connection.accessToken,
                     refreshToken: connection.refreshToken,
