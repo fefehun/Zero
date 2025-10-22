@@ -1,0 +1,76 @@
+services:
+  app:
+    container_name: zerodotemail-app-test
+    image: node:22
+    working_dir: /workspace
+    volumes:
+      - ${HOST_PROJECT_PATH}:/workspace
+    env_file:
+      - .env.container
+    networks:
+      - zero_default
+    command: >
+      sh -c "
+        npm install -g pnpm wrangler &&
+        rm -rf node_modules/.pnpm/@cloudflare+workerd-linux-64* &&
+        pnpm install --force &&
+        cd apps/server &&
+        pnpm dev
+      "
+    depends_on:
+      - db
+      - valkey
+      - upstash-proxy
+
+  db:
+    container_name: zerodotemail-db
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: zerodotemail
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - 5433:5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - zero_default
+
+  valkey:
+    container_name: zerodotemail-redis
+    image: docker.io/bitnami/valkey:latest
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+      - VALKEY_DISABLE_COMMANDS=FLUSHDB,FLUSHALL
+    ports:
+      - 6379:6379
+    volumes:
+      - valkey-data:/bitnami/valkey/data
+    networks:
+      - zero_default
+
+  upstash-proxy:
+    container_name: zerodotemail-upstash-proxy
+    image: hiett/serverless-redis-http:latest
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: upstash-local-token
+      SRH_CONNECTION_STRING: 'redis://valkey:6379'
+    ports:
+      - 8079:80
+    networks:
+      - zero_default
+
+networks:
+  zero_default:
+    external: true
+
+volumes:
+  valkey-data:
+    external: true
+    name: zero_valkey-data
+  postgres-data:
+    external: true
+    name: zero_postgres-data

@@ -33,6 +33,7 @@ yarn-error.log*
 bun-debug.log*
 # env files (can opt-in for committing if needed)
 .env
+.env.container
 .dev.vars
 
 # vercel
@@ -61,5 +62,6 @@ worker-configuration.d.ts
 # devcontainer
 .pnpm-store
 tsx-0/
+node-compile-cache/
 
 tools.json
